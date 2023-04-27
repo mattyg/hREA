@@ -42,13 +42,13 @@ pub mod reading;
 pub mod sorting;
 
 pub use index_tree::IndexSegment as TimeIndex;
-pub use writing::index_entry;
+pub use writing::index_hash;
 pub use reading::{
-    read_all_entry_hashes,
-    get_latest_entry_hashes,
-    get_older_entry_hashes,
+    read_all_hashes,
+    get_latest_hashes,
+    get_older_hashes,
 };
-pub use sorting::sort_entries_by_time_index;
+pub use sorting::sort_hashes_by_time_index;
 
 /// Configuration object that should be set in your host DNA's properties
 #[derive(Serialize, Deserialize, Debug, SerializedBytes)]
@@ -63,8 +63,8 @@ pub enum TimeIndexingError {
 
     #[error("Malformed time index link with bytes: {0:?}")]
     Malformed(Vec<u8>),
-    #[error("Entry not indexed in {0} for reading from offset {1}")]
-    NotIndexed(String, EntryHash),
+    #[error("Hash not indexed in {0} for reading from offset {1}")]
+    NotIndexed(String, AnyLinkableHash),
 }
 
 pub type TimeIndexResult<T> = Result<T, TimeIndexingError>;

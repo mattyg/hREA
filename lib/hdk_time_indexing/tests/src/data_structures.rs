@@ -29,7 +29,7 @@ mod data_structures {
         set_hdk(mock_hdk);
 
         // write time tree for first record into the index
-        hdk_time_indexing::writing::index_entry(
+        hdk_time_indexing::writing::index_hash(
             &index_name,
             target_entry_hash,
             DateTime::parse_from_rfc3339("2020-04-13T03:36:57+00:00").unwrap().into(),

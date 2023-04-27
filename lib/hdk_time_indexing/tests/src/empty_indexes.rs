@@ -51,7 +51,7 @@ mod empty_indexes {
 
         set_hdk(mock_hdk);
 
-        let result = hdk_time_indexing::reading::get_latest_entry_hashes(&index_name, 2);
+        let result = hdk_time_indexing::reading::get_latest_hashes(&index_name, 2);
         assert!(result.is_ok());
         assert_eq!(result.ok().unwrap(), vec![]);
     }

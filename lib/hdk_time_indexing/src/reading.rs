@@ -8,11 +8,11 @@ use crate::{
 use hdk_semantic_indexes_core::LinkTypes;
 
 /**
- * Retrieve the complete set of linked `EntryHash`es referenced in the `index_name` index.
+ * Retrieve the complete set of linked `AnyLinkableHash`es referenced in the `index_name` index.
  * This method is highly inefficient and strongly discouraged for large datasets. Use
  * only with indexes which are known to be of a small size.
  */
-pub fn read_all_entry_hashes<I>(index_name: &I) -> TimeIndexResult<Vec<EntryHash>>
+pub fn read_all_hashes<I>(index_name: &I) -> TimeIndexResult<Vec<AnyLinkableHash>>
     where I: AsRef<str>,
 {
     let root_hash = get_root_hash(index_name)?;
@@ -25,10 +25,10 @@ pub fn read_all_entry_hashes<I>(index_name: &I) -> TimeIndexResult<Vec<EntryHash
     }
 }
 
-/// Recursively performs a depth-first traversal of the specified time index tree, returning the `EntryHash`es
+/// Recursively performs a depth-first traversal of the specified time index tree, returning the `AnyLinkableHash`es
 /// of all the leafmost nodes (i.e. indexed entries) present in the index.
 ///
-fn collect_leaf_index_hashes<I>(index_name: &I, context_hash: EntryHash, context_depth: isize) -> TimeIndexResult<Vec<EntryHash>>
+fn collect_leaf_index_hashes<I>(index_name: &I, context_hash: AnyLinkableHash, context_depth: isize) -> TimeIndexResult<Vec<AnyLinkableHash>>
     where I: AsRef<str>,
 {
     let children = get_ordered_child_links_of_node(
@@ -39,14 +39,14 @@ fn collect_leaf_index_hashes<I>(index_name: &I, context_hash: EntryHash, context
     // last hop outside the index tree links to the targeted nodes, so return them
     if (*HAS_CHUNK_LEAVES && context_depth == -1) || (!(*HAS_CHUNK_LEAVES) && context_depth == 0) {
         return Ok(children.iter()
-            .map(|link| EntryHash::from(link.target.to_owned()))
+            .map(|link| AnyLinkableHash::from(link.target.to_owned()))
             .collect());
     }
 
     // still recursing downwards- load descendent nodes for every child found
-    let (descendents, errors): (Vec<TimeIndexResult<Vec<EntryHash>>>, Vec<TimeIndexResult<Vec<EntryHash>>>) = children.iter()
+    let (descendents, errors): (Vec<TimeIndexResult<Vec<AnyLinkableHash>>>, Vec<TimeIndexResult<Vec<AnyLinkableHash>>>) = children.iter()
         .map(|link| {
-            collect_leaf_index_hashes(index_name, EntryHash::from(link.target.to_owned()), context_depth - 1)
+            collect_leaf_index_hashes(index_name, link.target.to_owned(), context_depth - 1)
         })
         .partition(Result::is_ok);
 
@@ -62,22 +62,22 @@ fn collect_leaf_index_hashes<I>(index_name: &I, context_hash: EntryHash, context
 }
 
 /**
- * Retrieve the most recent entry hashes stored in the `index_name` time-ordered index,
+ * Retrieve the most recent hashes stored in the `index_name` time-ordered index,
  * up to a maximum of `limit`.
  */
-pub fn get_latest_entry_hashes<I>(index_name: &I, limit: usize) -> TimeIndexResult<Vec<EntryHash>>
+pub fn get_latest_hashes<I>(index_name: &I, limit: usize) -> TimeIndexResult<Vec<AnyLinkableHash>>
     where I: AsRef<str>,
 {
-    // find the most recently indexed EntryHash as a starting point
-    let most_recent = get_latest_indexed_entry_hash(index_name)?;
+    // find the most recently indexed AnyLinkableHash as a starting point
+    let most_recent = get_latest_indexed_hash(index_name)?;
 
     match most_recent {
         None => Ok(vec![]),
         Some(latest) => {
             // load a page of links to entries immediately before the latest
-            let mut earlier_page = get_older_entry_hashes(index_name, latest.to_owned(), limit)?;
+            let mut earlier_page = get_older_hashes(index_name, latest.to_owned(), limit)?;
 
-            // remove the earliest linked entry
+            // remove the earliest linked hash
             let num_earlier = earlier_page.len();
             if num_earlier > 0 {
                 earlier_page.truncate(num_earlier - 1);
@@ -93,43 +93,43 @@ pub fn get_latest_entry_hashes<I>(index_name: &I, limit: usize) -> TimeIndexResu
 }
 
 /**
- * Retrieve entry hashes indexed in the `index_name` time-ordered index immediately
- * before `before_entry` (not inclusive), up to a maximum of `limit`.
+ * Retrieve hashes indexed in the `index_name` time-ordered index immediately
+ * before `before_hash` (not inclusive), up to a maximum of `limit`.
  *
  * This method is best used with cursor-based pagination, where the previously oldest
- * returned `EntryHash` is used as a cursor to return the next most recent page of entries.
+ * returned `AnyLinkableHash` is used as a cursor to return the next most recent page of entries.
  */
-pub fn get_older_entry_hashes<I>(index_name: &I, before_entry: EntryHash, limit: usize) -> TimeIndexResult<Vec<EntryHash>>
+pub fn get_older_hashes<I>(index_name: &I, before_hash: AnyLinkableHash, limit: usize) -> TimeIndexResult<Vec<AnyLinkableHash>>
     where I: AsRef<str>,
 {
-    Ok(get_ordered_links_before(index_name, before_entry, limit)?
+    Ok(get_ordered_links_before(index_name, before_hash, limit)?
         .iter()
-        .map(|link| { EntryHash::from(link.target.to_owned()) })
+        .map(|link| { AnyLinkableHash::from(link.target.to_owned()) })
         .collect())
 }
 
 /// Return a maximum of `limit` `Link`s, in order from most recent to oldest in `index_name`
-/// starting at the given (already indexed) `entry_hash`.
+/// starting at the given (already indexed) `hash`.
 ///
-/// :TODO: account for the possibility that an entry might be validly linked multiple times in the same index
+/// :TODO: account for the possibility that an hash might be validly linked multiple times in the same index
 /// :TODO: de-duplicate links to account for network partitions erroneously causing multiple writes of the same index
 ///
-fn get_ordered_links_before<I>(index_name: &I, entry_hash: EntryHash, limit: usize) -> TimeIndexResult<Vec<Link>>
+fn get_ordered_links_before<I>(index_name: &I, hash: AnyLinkableHash, limit: usize) -> TimeIndexResult<Vec<Link>>
     where I: AsRef<str>,
 {
-    // inspect link from entry to index in order to determine indexed time & parent node in index tree
+    // inspect link from hash to index in order to determine indexed time & parent node in index tree
     let parents = get_links(
-        entry_hash.to_owned(),
+        hash.to_owned(),
         LinkTypes::TimeIndex,
         Some(link_prefix_for_index(index_name)),
     )?;
     let leaf_link = parents.first().ok_or(
-        TimeIndexingError::NotIndexed(index_name.as_ref().to_string(), entry_hash)
+        TimeIndexingError::NotIndexed(index_name.as_ref().to_string(), hash)
     )?;
     let this_index: IndexSegment = leaf_link.tag.to_owned().try_into()?;
     let this_timestamp = this_index.into();
 
-    let leaf_hash = EntryHash::from(leaf_link.target.to_owned());
+    let leaf_hash = AnyLinkableHash::from(leaf_link.target.to_owned());
 
     // find all our older siblings
     let mut older_siblings = get_ordered_child_links_of_node_older_than(index_name, leaf_hash, this_timestamp)?;
@@ -154,7 +154,7 @@ fn get_ordered_links_before<I>(index_name: &I, entry_hash: EntryHash, limit: usi
             None => { break; },
             Some(prev) => {
                 // append any found link targets from the previous leaf
-                let more_older_siblings = get_ordered_child_links_of_node_older_than(index_name, prev.hash()?, this_timestamp)?;
+                let more_older_siblings = get_ordered_child_links_of_node_older_than(index_name, AnyLinkableHash::from(prev.hash()?), this_timestamp)?;
                 older_siblings = [older_siblings, more_older_siblings].concat();
                 older_siblings.truncate(limit);
 
@@ -170,7 +170,7 @@ fn get_ordered_links_before<I>(index_name: &I, entry_hash: EntryHash, limit: usi
 
 /// Locate all the child links of the node with hash `leaf_hash`, ordered from newest to oldest.
 ///
-fn get_ordered_child_links_of_node<I>(index_name: &I, leaf_hash: EntryHash) -> TimeIndexResult<Vec<Link>>
+fn get_ordered_child_links_of_node<I>(index_name: &I, leaf_hash: AnyLinkableHash) -> TimeIndexResult<Vec<Link>>
     where I: AsRef<str>,
 {
     // query children of parent node
@@ -189,7 +189,7 @@ fn get_ordered_child_links_of_node<I>(index_name: &I, leaf_hash: EntryHash) -> T
 /// Locate all the child links of the node with hash `leaf_hash` which are older than `this_timestamp`,
 /// ordered from newest to oldest.
 ///
-fn get_ordered_child_links_of_node_older_than<I>(index_name: &I, leaf_hash: EntryHash, this_timestamp: DateTime<Utc>) -> TimeIndexResult<Vec<Link>>
+fn get_ordered_child_links_of_node_older_than<I>(index_name: &I, leaf_hash: AnyLinkableHash, this_timestamp: DateTime<Utc>) -> TimeIndexResult<Vec<Link>>
     where I: AsRef<str>,
 {
     // query children of parent node
@@ -228,7 +228,7 @@ fn get_previous_leaf<I>(index_name: &I, from_timestamp: &DateTime<Utc>, try_dept
         };
 
         // find all nodes in the tree at this depth that are older than the starting offset
-        let older_siblings = get_ordered_child_links_of_node_older_than(index_name, try_parent_hash, from_timestamp.to_owned())?;
+        let older_siblings = get_ordered_child_links_of_node_older_than(index_name, AnyLinkableHash::from(try_parent_hash), from_timestamp.to_owned())?;
 
         match older_siblings.first() {
             // there are no older siblings in this list
@@ -262,7 +262,7 @@ fn get_previous_leaf<I>(index_name: &I, from_timestamp: &DateTime<Utc>, try_dept
 /// Determine the hash of the most recent `IndexSegment` written for the given `index_name`.
 /// If the index has not been created yet, `None` is returned in the result.
 ///
-fn get_latest_indexed_entry_hash<I>(index_name: &I) -> TimeIndexResult<Option<EntryHash>>
+fn get_latest_indexed_hash<I>(index_name: &I) -> TimeIndexResult<Option<AnyLinkableHash>>
     where I: AsRef<str>,
 {
     match get_root_hash(index_name)? {
@@ -275,7 +275,7 @@ fn get_latest_indexed_entry_hash<I>(index_name: &I) -> TimeIndexResult<Option<En
 /// Find the most recent indexed hash in all children of `current_segment_hash`
 /// by recursively performing a depth-first search of its children.
 ///
-fn get_newest_leafmost_hash<I>(current_segment_hash: EntryHash, index_name: &I) -> TimeIndexResult<EntryHash>
+fn get_newest_leafmost_hash<I>(current_segment_hash: AnyLinkableHash, index_name: &I) -> TimeIndexResult<AnyLinkableHash>
     where I: AsRef<str>,
 {
     let mut children = get_links(
@@ -288,13 +288,13 @@ fn get_newest_leafmost_hash<I>(current_segment_hash: EntryHash, index_name: &I) 
 
     match children.last() {
         None => Ok(current_segment_hash),
-        Some(l) => get_newest_leafmost_hash(EntryHash::from(l.target.to_owned()), index_name),
+        Some(l) => get_newest_leafmost_hash(AnyLinkableHash::from(l.target.to_owned()), index_name),
     }
 }
 
 /// Determine the hash of the root node for the given index.
 ///
-fn get_root_hash<I>(index_name: &I) -> TimeIndexResult<Option<EntryHash>>
+fn get_root_hash<I>(index_name: &I) -> TimeIndexResult<Option<AnyLinkableHash>>
     where I: AsRef<str>,
 {
     let root = Path::from(index_name.as_ref()).typed(LinkTypes::TimeIndex)?;
@@ -302,7 +302,7 @@ fn get_root_hash<I>(index_name: &I) -> TimeIndexResult<Option<EntryHash>>
         // bail early if the index hasn't been touched
         return Ok(None);
     }
-    Ok(Some(root.path_entry_hash()?))
+    Ok(Some(AnyLinkableHash::from(root.path_entry_hash()?)))
 }
 
 /// Determines prefix `LinkTag` for locating nodes of the index `index_name`.
